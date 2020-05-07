@@ -47,6 +47,9 @@
 #import "Bugsnag.h"
 #import "BugsnagErrorTypes.h"
 #import "BugsnagNotifier.h"
+#import "BugsnagMetadataInternal.h"
+#import "BugsnagStateEvent.h"
+#import "BugsnagCollections.h"
 
 #if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
@@ -285,6 +288,7 @@ void BSGWriteSessionCrashData(BugsnagSession *session) {
 @property (nonatomic) BOOL appDidCrashLastLaunch;
 @property (nonatomic, strong) BugsnagMetadata *metadata;
 @property (nonatomic) NSString *codeBundleId;
+@property(nonatomic, readwrite, strong) BugsnagObserverBlock block;
 #if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
 // The previous device orientation - iOS only
 @property (nonatomic, strong) NSString *lastOrientation;
@@ -313,12 +317,6 @@ void BSGWriteSessionCrashData(BugsnagSession *session) {
                                   metadata:(BugsnagMetadata *_Nullable)metadata
                               handledState:(BugsnagHandledState *_Nonnull)handledState
                                    session:(BugsnagSession *_Nullable)session;
-@end
-
-@interface BugsnagMetadata ()
-@property(unsafe_unretained) id<BugsnagMetadataDelegate> _Nullable delegate;
-- (NSDictionary *_Nonnull)toDictionary;
-- (id)deepCopy;
 @end
 
 @interface BSGOutOfMemoryWatchdog ()
@@ -378,9 +376,6 @@ NSString *_lastOrientation = nil;
 
         self.extraRuntimeInfo = [NSMutableDictionary new];
         self.metadataLock = [[NSLock alloc] init];
-        self.configuration.metadata.delegate = self;
-        self.configuration.config.delegate = self;
-        self.state.delegate = self;
         self.crashSentry = [BugsnagCrashSentry new];
         self.errorReportApiClient = [[BugsnagErrorReportApiClient alloc] initWithConfig:configuration
                                                                               queueName:@"Error API queue"];
@@ -398,9 +393,21 @@ NSString *_lastOrientation = nil;
 
         // Start with a copy of the configuration metadata
         self.metadata = [[configuration metadata] deepCopy];
+        // sync initial state
         [self metadataChanged:self.configuration.metadata];
         [self metadataChanged:self.configuration.config];
         [self metadataChanged:self.state];
+
+        // add observers for future metadata changes
+        void (^observer)(BugsnagStateEvent *) = ^(BugsnagStateEvent *event) {
+            [self metadataChanged:event.data];
+        };
+
+        [self.metadata registerStateObserverWithBlock:observer];
+        [self.configuration.metadata registerStateObserverWithBlock:observer];
+        [self.configuration.config registerStateObserverWithBlock:observer];
+        [self.state registerStateObserverWithBlock:observer];
+
         self.pluginClient = [[BugsnagPluginClient alloc] initWithPlugins:self.configuration.plugins];
 
 #if TARGET_OS_IOS
@@ -408,6 +415,16 @@ NSString *_lastOrientation = nil;
 #endif
     }
     return self;
+}
+
+- (void)registerStateObserverWithBlock:(BugsnagObserverBlock _Nonnull)observer {
+    self.block = observer;
+}
+
+- (void)notifyObserver:(BugsnagStateEvent *)event {
+    if (self.block != nil) {
+        self.block(event);
+    }
 }
 
 NSString *const kWindowVisible = @"Window Became Visible";
@@ -735,6 +752,12 @@ NSString *const BSGBreadcrumbLoadedMessage = @"Bugsnag loaded";
     [self.metadata addMetadata:userId withKey:BSGKeyId    toSection:BSGKeyUser];
     [self.metadata addMetadata:name   withKey:BSGKeyName  toSection:BSGKeyUser];
     [self.metadata addMetadata:email  withKey:BSGKeyEmail toSection:BSGKeyUser];
+
+    NSMutableDictionary *dict = [NSMutableDictionary new];
+    BSGDictInsertIfNotNil(dict, self.user.id, @"id");
+    BSGDictInsertIfNotNil(dict, self.user.email, @"email");
+    BSGDictInsertIfNotNil(dict, self.user.name, @"name");
+    [self notifyObserver:[[BugsnagStateEvent alloc] initWithName:kStateEventUser data:dict]];
 }
 
 // =============================================================================
@@ -779,6 +802,7 @@ NSString *const BSGBreadcrumbLoadedMessage = @"Bugsnag loaded";
 
 - (void)setContext:(NSString *_Nullable)context {
     self.configuration.context = context;
+    [self notifyObserver:[[BugsnagStateEvent alloc] initWithName:kStateEventContext data:context]];
 }
 
 - (NSString *)context {
@@ -993,6 +1017,9 @@ NSString *const BSGBreadcrumbLoadedMessage = @"Bugsnag loaded";
         } else {
             bsg_log_debug(@"Unknown metadata dictionary changed");
         }
+
+        BugsnagStateEvent *event = [[BugsnagStateEvent alloc] initWithName:kStateEventMetadata data:metadata];
+        [self notifyObserver:event];
     }
 }
 
