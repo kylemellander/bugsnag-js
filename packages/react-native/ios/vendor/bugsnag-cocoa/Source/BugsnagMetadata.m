@@ -31,7 +31,7 @@
 #import "BugsnagStateEvent.h"
 
 @interface BugsnagMetadata ()
-@property(nonatomic, readwrite, strong) BugsnagObserverBlock block;
+@property(nonatomic, readwrite, strong) NSMutableArray *stateEventBlocks;
 @end
 
 @implementation BugsnagMetadata
@@ -46,8 +46,9 @@
         // Ensure that the instantiating dictionary is mutable.
         // Saves checks later.
         self.dictionary = [dict mutableCopy];
+        self.stateEventBlocks = [NSMutableArray new];
     }
-    [self notifyObserver];
+    [self notifyObservers];
     return self;
 }
 
@@ -55,15 +56,15 @@
     return [self.dictionary mutableCopy];
 }
 
-- (void)notifyObserver {
-    if (self.block != nil) {
+- (void)notifyObservers {
+    for (BugsnagObserverBlock callback in self.stateEventBlocks) {
         BugsnagStateEvent *event = [[BugsnagStateEvent alloc] initWithName:kStateEventMetadata data:self];
-        self.block(event);
+        callback(event);
     }
 }
 
-- (void)registerStateObserverWithBlock:(BugsnagObserverBlock _Nonnull)block {
-    self.block = block;
+- (void)addObserverUsingBlock:(BugsnagObserverBlock _Nonnull)block {
+    [self.stateEventBlocks addObject:[block copy]];
 }
 
 // MARK: - <NSMutableCopying>
@@ -135,7 +136,7 @@
     
     // Call the delegate if we've materially changed it
     if (metadataChanged) {
-        [self notifyObserver];
+        [self notifyObservers];
     }
 }
 
@@ -196,7 +197,7 @@
             
             // Call the delegate if we've materially changed it
             if (metadataChanged) {
-                [self notifyObserver];
+                [self notifyObservers];
             }
         }
     }
@@ -222,7 +223,7 @@
     @synchronized(self) {
         [self.dictionary removeObjectForKey:sectionName];
     }
-    [self notifyObserver];
+    [self notifyObservers];
 }
 
 - (void)clearMetadataFromSection:(NSString *)section
@@ -233,7 +234,7 @@
             [[[self dictionary] objectForKey:section] removeObjectForKey:key];
         }
     }
-    [self notifyObserver];
+    [self notifyObservers];
 }
 
 @end

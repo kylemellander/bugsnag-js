@@ -44,6 +44,8 @@
 
 @implementation BugsnagReactNative
 
+@synthesize bridge = _bridge;
+
 RCT_EXPORT_MODULE()
 
 RCT_EXPORT_METHOD(configureAsync:(NSDictionary *)readableMap
@@ -72,9 +74,9 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(configure:(NSDictionary *)readableMap) {
                 && ![error.errorMessage hasPrefix:@"Unhandled JS Exception"];
     }];
 
-    // TODO: use this emitter to inform JS of changes to user, context and metadata
     BugsnagReactNativeEmitter *emitter = [BugsnagReactNativeEmitter new];
-
+    emitter.bridge = self.bridge;
+    [emitter registerForNativeStateChanges];
     BugsnagConfiguration *config = [Bugsnag configuration];
     return [self.configSerializer serialize:config];
 }

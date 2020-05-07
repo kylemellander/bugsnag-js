@@ -2,4 +2,5 @@
 #import <React/RCTEventEmitter.h>
 
 @interface BugsnagReactNativeEmitter : RCTEventEmitter <RCTBridgeModule>
+- (void)registerForNativeStateChanges;
 @end

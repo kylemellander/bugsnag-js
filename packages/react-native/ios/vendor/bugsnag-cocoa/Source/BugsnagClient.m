@@ -288,7 +288,7 @@ void BSGWriteSessionCrashData(BugsnagSession *session) {
 @property (nonatomic) BOOL appDidCrashLastLaunch;
 @property (nonatomic, strong) BugsnagMetadata *metadata;
 @property (nonatomic) NSString *codeBundleId;
-@property(nonatomic, readwrite, strong) BugsnagObserverBlock block;
+@property(nonatomic, readwrite, strong) NSMutableArray *stateEventBlocks;
 #if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
 // The previous device orientation - iOS only
 @property (nonatomic, strong) NSString *lastOrientation;
@@ -374,6 +374,7 @@ NSString *_lastOrientation = nil;
                                                                       configuration:configuration];
         }
 
+        self.stateEventBlocks = [NSMutableArray new];
         self.extraRuntimeInfo = [NSMutableDictionary new];
         self.metadataLock = [[NSLock alloc] init];
         self.crashSentry = [BugsnagCrashSentry new];
@@ -399,14 +400,10 @@ NSString *_lastOrientation = nil;
         [self metadataChanged:self.state];
 
         // add observers for future metadata changes
-        void (^observer)(BugsnagStateEvent *) = ^(BugsnagStateEvent *event) {
-            [self metadataChanged:event.data];
-        };
-
-        [self.metadata registerStateObserverWithBlock:observer];
-        [self.configuration.metadata registerStateObserverWithBlock:observer];
-        [self.configuration.config registerStateObserverWithBlock:observer];
-        [self.state registerStateObserverWithBlock:observer];
+        __weak __typeof__(self) weakSelf = self;
+        [self addObserverUsingBlock:^(BugsnagStateEvent *event) {
+            [weakSelf metadataChanged:event.data];
+        }];
 
         self.pluginClient = [[BugsnagPluginClient alloc] initWithPlugins:self.configuration.plugins];
 
@@ -417,13 +414,19 @@ NSString *_lastOrientation = nil;
     return self;
 }
 
-- (void)registerStateObserverWithBlock:(BugsnagObserverBlock _Nonnull)observer {
-    self.block = observer;
+- (void)addObserverUsingBlock:(BugsnagObserverBlock _Nonnull)observer {
+    [self.stateEventBlocks addObject:[observer copy]];
+
+    // additionally listen for metadata updates
+    [self.metadata addObserverUsingBlock:observer];
+    [self.configuration.metadata addObserverUsingBlock:observer];
+    [self.configuration.config addObserverUsingBlock:observer];
+    [self.state addObserverUsingBlock:observer];
 }
 
-- (void)notifyObserver:(BugsnagStateEvent *)event {
-    if (self.block != nil) {
-        self.block(event);
+- (void)notifyObservers:(BugsnagStateEvent *)event {
+    for (BugsnagObserverBlock callback in self.stateEventBlocks) {
+        callback(event);
     }
 }
 
@@ -757,7 +760,7 @@ NSString *const BSGBreadcrumbLoadedMessage = @"Bugsnag loaded";
     BSGDictInsertIfNotNil(dict, self.user.id, @"id");
     BSGDictInsertIfNotNil(dict, self.user.email, @"email");
     BSGDictInsertIfNotNil(dict, self.user.name, @"name");
-    [self notifyObserver:[[BugsnagStateEvent alloc] initWithName:kStateEventUser data:dict]];
+    [self notifyObservers:[[BugsnagStateEvent alloc] initWithName:kStateEventUser data:dict]];
 }
 
 // =============================================================================
@@ -802,7 +805,7 @@ NSString *const BSGBreadcrumbLoadedMessage = @"Bugsnag loaded";
 
 - (void)setContext:(NSString *_Nullable)context {
     self.configuration.context = context;
-    [self notifyObserver:[[BugsnagStateEvent alloc] initWithName:kStateEventContext data:context]];
+    [self notifyObservers:[[BugsnagStateEvent alloc] initWithName:kStateEventContext data:context]];
 }
 
 - (NSString *)context {
@@ -1014,12 +1017,7 @@ NSString *const BSGBreadcrumbLoadedMessage = @"Bugsnag loaded";
         } else if (metadata == self.state) {
             BSSerializeJSONDictionary([metadata toDictionary],
                                       &bsg_g_bugsnag_data.stateJSON);
-        } else {
-            bsg_log_debug(@"Unknown metadata dictionary changed");
         }
-
-        BugsnagStateEvent *event = [[BugsnagStateEvent alloc] initWithName:kStateEventMetadata data:metadata];
-        [self notifyObserver:event];
     }
 }
 
