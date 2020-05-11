@@ -1,4 +1,4 @@
-# Bugsnag error monitoring & reporting for JavaScript 
+# Bugsnag error monitoring & reporting for JavaScript  
 
 Automatically detect JavaScript errors in the browser, Node.js and Expo, with plugins for React, Vue, Angular, Express, Restify and Koa. Get cross-platform error detection for handled and unhandled errors with real-time error alerts and detailed diagnostic reports.
 
